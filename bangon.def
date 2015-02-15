@@ -1,0 +1,10 @@
+;
+; bangon.def
+;
+
+LIBRARY "on.dll"
+EXPORTS
+	WinDbgExtensionDllInit
+	ExtensionApiVersion
+	help
+	dumptree
