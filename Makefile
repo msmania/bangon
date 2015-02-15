@@ -12,7 +12,9 @@ TARGET=on.dll
 DEF=bangon.def
 OBJS=\
     $(OUTDIR)\dllmain.obj\
-    $(OUTDIR)\bangon.obj
+    $(OUTDIR)\bangon.obj\
+    $(OUTDIR)\peimage.obj\
+    $(OUTDIR)\dt.obj
 
 # warning C4100: 'hCurrentProcess' : unreferenced formal parameter
 CFLAGS=\
