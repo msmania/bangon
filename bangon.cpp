@@ -65,7 +65,7 @@ DECLARE_API (ver) {
     DWORD ProdLS = 0;
 
     CPEImage pe(ImageBase);
-    if ( pe.IsInitialized() ) {
+    if ( pe.IsInitialized() && pe.LoadVersion() ) {
         pe.GetVersion(&FileMS, &FileLS, &ProdMS, &ProdLS);
         dprintf("ImageBase:      %s\n", ptos(ImageBase, buf1, sizeof(buf1)));
         dprintf("Platform:       %04x\n", pe.GetPlatform());

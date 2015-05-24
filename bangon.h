@@ -21,7 +21,10 @@ private:
         VS_FIXEDFILEINFO Value;
     } mVersion;
 
-    bool Initialize(ULONG64 ImageBase);
+    IMAGE_DATA_DIRECTORY mResourceDir;
+    IMAGE_DATA_DIRECTORY mImportDir;
+
+    ULONG ReadPointerEx(ULONG64 Address, PULONG64 Pointer) const;
 
 public:
     CPEImage(ULONG64 ImageBase);
@@ -30,10 +33,15 @@ public:
     bool IsInitialized() const;
     bool Is64bit() const;
 
+    bool Initialize(ULONG64 ImageBase);
+    bool LoadVersion();
+
     WORD GetPlatform() const;
     void GetVersion(PDWORD FileVersionMS,
                     PDWORD FileVersionLS,
                     PDWORD ProductVersionMS,
                     PDWORD ProductVersionLS) const;
 
+    void DumpAddressTable(LPCSTR DllName, const IMAGE_IMPORT_DESCRIPTOR &ImportDesc) const;
+    void DumpImportTable(LPCSTR DllName) const;
 };
