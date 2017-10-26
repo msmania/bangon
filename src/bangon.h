@@ -1,7 +1,3 @@
-//
-// bangon.h
-//
-
 #define LODWORD(ll) ((DWORD)((ll)&0xffffffff))
 #define HIDWORD(ll) ((DWORD)(((ll)>>32)&0xffffffff))
 
@@ -11,6 +7,8 @@ class CPEImage {
 private:
     ULONG64 mImageBase;
     WORD mPlatform;
+    IMAGE_DATA_DIRECTORY mResourceDir;
+    IMAGE_DATA_DIRECTORY mImportDir;
 
     // https://msdn.microsoft.com/en-us/library/windows/desktop/ms647001(v=vs.85).aspx
     struct VS_VERSIONINFO {
@@ -21,10 +19,11 @@ private:
         VS_FIXEDFILEINFO Value;
     } mVersion;
 
-    IMAGE_DATA_DIRECTORY mResourceDir;
-    IMAGE_DATA_DIRECTORY mImportDir;
-
+    // We cannot use ReadPointer() because IsPtr64() returns true in a WOW64 process.
     ULONG ReadPointerEx(ULONG64 Address, PULONG64 Pointer) const;
+
+    bool Initialize(ULONG64 ImageBase);
+    void DumpAddressTable(LPCSTR DllName, const IMAGE_IMPORT_DESCRIPTOR &ImportDesc) const;
 
 public:
     CPEImage(ULONG64 ImageBase);
@@ -33,7 +32,6 @@ public:
     bool IsInitialized() const;
     bool Is64bit() const;
 
-    bool Initialize(ULONG64 ImageBase);
     bool LoadVersion();
 
     WORD GetPlatform() const;
@@ -42,6 +40,5 @@ public:
                     PDWORD ProductVersionMS,
                     PDWORD ProductVersionLS) const;
 
-    void DumpAddressTable(LPCSTR DllName, const IMAGE_IMPORT_DESCRIPTOR &ImportDesc) const;
     void DumpImportTable(LPCSTR DllName) const;
 };

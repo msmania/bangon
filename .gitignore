@@ -1,2 +1,3 @@
-/bin
-/bin64
+obj/
+x86/
+amd64/

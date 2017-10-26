@@ -1,7 +1,3 @@
-//
-// bangon.cpp
-//
-
 #define KDEXT_64BIT
 
 #include <Windows.h>
@@ -9,9 +5,7 @@
 #include "wdbgexts.h"
 #include "bangon.h"
 
-//
 // http://msdn.microsoft.com/en-us/library/windows/hardware/ff543968(v=vs.85).aspx
-//
 EXT_API_VERSION ApiVersion = {
     0,	// MajorVersion
     0,	// MinorVersion
@@ -52,8 +46,10 @@ LPCSTR ptos(ULONG64 p, LPSTR s, ULONG len) {
 }
 
 DECLARE_API (help) {
-    dprintf("!dt <RTL_SPLAY_LINKS*>                         - dump splay tree\n");
-    dprintf("!dt <Imagebase address>                        - display version info\n\n");
+    dprintf("!dt <RTL_SPLAY_LINKS*>                 - dump splay tree\n"
+            "!ver <Imagebase>                       - display version info\n"
+            "!imp <Imagebase> [-ALL | <Module>]     - display import table\n\n"
+            );
 }
 
 DECLARE_API (ver) {

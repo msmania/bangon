@@ -1,7 +1,3 @@
-//
-// peimage.cpp
-//
-
 #define KDEXT_64BIT
 
 #include <windows.h>
