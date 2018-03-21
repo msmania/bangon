@@ -1,15 +1,9 @@
-//
-// dt.cpp
-//
-
 // IsPtr64() is supported only in 64bit pointer mode.
 #define KDEXT_64BIT
-
-#include <Windows.h>
+#include <windows.h>
 #include <set>
 #include <queue>
-
-#include "wdbgexts.h"
+#include <wdbgexts.h>
 #include "bangon.h"
 
 struct TREE_ITEM32 {

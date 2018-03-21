@@ -1,7 +1,6 @@
 #define KDEXT_64BIT
-
 #include <windows.h>
-#include "wdbgexts.h"
+#include <wdbgexts.h>
 #include "bangon.h"
 
 CPEImage::CPEImage(ULONG64 ImageBase) : mImageBase(0), mPlatform(mPlatform) {
