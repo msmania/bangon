@@ -300,18 +300,24 @@ void CPEImage::DumpAddressTable(LPCSTR DllName, const IMAGE_IMPORT_DESCRIPTOR &I
 
         if (!DataBuffer) break; // detecting the last sentinel
 
-        ll = mImageBase + DataBuffer;
-        Status = ReadMemory(ll, &Ordinal, sizeof(WORD), &BytesRead);
-        if ( !Status || BytesRead!=sizeof(WORD) ) {
-            dprintf("Failed to read the ordinal at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            break;
+        if (DataBuffer & (Is64bit() ? IMAGE_ORDINAL_FLAG64 : IMAGE_ORDINAL_FLAG32)) {
+          Ordinal = DataBuffer & 0xffff;
+          NameBuffer[0] = 0;
         }
+        else {
+          ll = mImageBase + DataBuffer;
+          Status = ReadMemory(ll, &Ordinal, sizeof(WORD), &BytesRead);
+          if ( !Status || BytesRead!=sizeof(WORD) ) {
+              dprintf("Failed to read the ordinal at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
+              break;
+          }
 
-        ll = mImageBase + DataBuffer + 2;
-        Status = ReadMemory(ll, &NameBuffer, sizeof(NameBuffer), &BytesRead);
-        if ( !Status || BytesRead!=sizeof(NameBuffer) ) {
-            dprintf("Failed to read the function name at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            break;
+          ll = mImageBase + DataBuffer + 2;
+          Status = ReadMemory(ll, &NameBuffer, sizeof(NameBuffer), &BytesRead);
+          if ( !Status || BytesRead!=sizeof(NameBuffer) ) {
+              dprintf("Failed to read the function name at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
+              break;
+          }
         }
 
         ll = mImageBase + ImportDesc.FirstThunk + i * AddressSize;
