@@ -5,7 +5,9 @@ class PEImage final {
 
   std::string RvaString(uint32_t offset) const;
   bool Load(ULONG64 ImageBase);
-  void DumpIATEntries(std::ostream &s, const IMAGE_IMPORT_DESCRIPTOR &desc) const;
+  void DumpIATEntries(int index,
+                      std::ostream &s,
+                      const IMAGE_IMPORT_DESCRIPTOR &desc) const;
 
 public:
   PEImage(address_t base);

@@ -105,7 +105,8 @@ std::string PEImage::RvaString(uint32_t offset) const {
   return buf.p;
 }
 
-void PEImage::DumpIATEntries(std::ostream &s,
+void PEImage::DumpIATEntries(int index,
+                             std::ostream &s,
                              const IMAGE_IMPORT_DESCRIPTOR &desc) const {
   if (!IsInitialized()) return;
 
@@ -124,21 +125,20 @@ void PEImage::DumpIATEntries(std::ostream &s,
 
     if (rva_name & (Is64bit() ? IMAGE_ORDINAL_FLAG64 : IMAGE_ORDINAL_FLAG32)) {
       const uint16_t ordinal = rva_name & 0xffff;
-      s << std::setw(6) << index_entry
-        << ' '  << std::hex << std::setw(4) << ordinal;
+      s << index << '.' << index_entry
+        << " Ordinal#"  << std::dec << ordinal;
     }
     else {
       const auto hint = load_data<uint16_t>(base_ + rva_name);
       const auto name = RvaString(static_cast<uint32_t>(rva_name) + 2);
-      s << std::setw(6) << index_entry
-        << ' ' << std::hex << std::setw(4) << hint
-        << ' ' << std::setw(32) << name;
+      s << index << '.' << index_entry
+        << ' ' << name << '@' << hint;
     }
 
     GetSymbol(rva_func, symbol, &displacement);
-    s << ' ' << address_string(rva_func)
-      << ' ' << symbol << '+' << displacement
-      << std::endl;
+    s << ' ' << address_string(rva_func) << ' ' << symbol;
+    if (displacement) s << '+' << displacement;
+    s << std::endl;
   }
 }
 
@@ -160,7 +160,7 @@ void PEImage::DumpIAT(const std::string &target) const {
 
     if (target.size() == 0 || target == "*") {
       std::stringstream s;
-      s << std::dec << std::setw(4) << index_desc
+      s << std::dec << index_desc
         << ' ' << address_string(desc_raw)
         << ' ' << thunk_name
         << std::endl;
@@ -169,7 +169,7 @@ void PEImage::DumpIAT(const std::string &target) const {
 
     if (target == "*" || target == thunk_name) {
       std::stringstream s;
-      DumpIATEntries(s, desc);
+      DumpIATEntries(index_desc, s, desc);
       dprintf("%s\n", s.str().c_str());
     }
   }
@@ -253,7 +253,9 @@ class ResourceDirectory {
       : base_(base)
     {}
 
-    void Iterate(address_t addr, const ResourceId &filter, ResourceIterator func) {
+    void Iterate(address_t addr,
+                 const ResourceId &filter,
+                 ResourceIterator func) {
       const auto entry = load_data<IMAGE_RESOURCE_DIRECTORY_ENTRY>(addr);
       if (!entry.Name) return;
 
@@ -284,7 +286,9 @@ public:
     : base_(base)
   {}
 
-  void Iterate(address_t addr, const ResourceId &filter, ResourceIterator func) {
+  void Iterate(address_t addr,
+               const ResourceId &filter,
+               ResourceIterator func) {
     const auto fastLookup = load_data<IMAGE_RESOURCE_DIRECTORY>(addr);
     const int num_entries =
       fastLookup.NumberOfNamedEntries + fastLookup.NumberOfIdEntries;
@@ -320,10 +324,10 @@ VS_FIXEDFILEINFO PEImage::GetVersion() const {
                     VS_FIXEDFILEINFO Value;
                 };
 
-                if (data.Size < sizeof(VS_VERSIONINFO))
-                  return;
+                if (data.Size < sizeof(VS_VERSIONINFO)) return;
 
-                const auto ver = load_data<VS_VERSIONINFO>(base_ + data.OffsetToData);
+                const auto ver =
+                  load_data<VS_VERSIONINFO>(base_ + data.OffsetToData);
                 if (ver.wValueLength != sizeof(VS_FIXEDFILEINFO)
                     || ver.Value.dwSignature != 0xFEEF04BD)
                   return;
