@@ -16,11 +16,17 @@ RM=del /q
 DEF=$(SRCDIR)\bangon.def
 
 OBJS=\
+	$(OBJDIR)\common.obj\
 	$(OBJDIR)\dllmain.obj\
-	$(OBJDIR)\peimage.obj\
 	$(OBJDIR)\dt.obj\
+	$(OBJDIR)\peimage.obj\
+	$(OBJDIR)\symbol_manager.obj\
+	$(OBJDIR)\thread.obj\
+	$(OBJDIR)\utils.obj\
+	$(OBJDIR)\vtable_manager.obj\
 
 LIBS=\
+	dbgeng.lib\
 
 # warning C4100: unreferenced formal parameter
 CFLAGS=\
@@ -30,7 +36,8 @@ CFLAGS=\
 	/Fo"$(OBJDIR)\\"\
 	/Fd"$(OBJDIR)\\"\
 	/DUNICODE\
-	/O2\
+	/D_CRT_SECURE_NO_WARNINGS\
+	/Od\
 	/EHsc\
 	/W4\
 	/wd4100\

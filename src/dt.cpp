@@ -4,7 +4,7 @@
 #include <set>
 #include <queue>
 #include <wdbgexts.h>
-#include "bangon.h"
+#include "common.h"
 
 struct TREE_ITEM32 {
     ULONG Parent;

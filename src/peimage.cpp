@@ -1,408 +1,370 @@
+#include <sstream>
+#include <functional>
+#include <iomanip>
 #define KDEXT_64BIT
 #include <windows.h>
 #include <wdbgexts.h>
-#include "bangon.h"
 
-CPEImage::CPEImage(ULONG64 ImageBase) : mImageBase(0), mPlatform(mPlatform) {
-    ZeroMemory(&mVersion, sizeof(mVersion));
-    ZeroMemory(&mResourceDir, sizeof(mResourceDir));
-    ZeroMemory(&mImportDir, sizeof(mImportDir));
-    Initialize(ImageBase);
+#include "common.h"
+#include "peimage.h"
+
+// https://docs.microsoft.com/en-us/windows/win32/debug/pe-format
+// https://docs.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_data_directory
+enum ImageDataDirectoryName {
+  ExportTable,
+  ImportTable,
+  ResourceTable,
+  ExceptionTable,
+  CertificateTable,
+  BaseRelocationTable,
+  DebuggingInformation,
+  ArchitectureSpecificData,
+  GlobalPointerRegister,
+  ThreadLocalStorageTable,
+  LoadConfiguration,
+  BoundImportTable,
+  ImportAddressTable,
+  DelayImportDescriptor,
+  CLRHeader,
+  Reserved,
+};
+
+PEImage::PEImage(address_t base) {
+  Load(base);
 }
 
-CPEImage::~CPEImage() {
+bool PEImage::IsInitialized() const {
+  return !!base_;
 }
 
-bool CPEImage::IsInitialized() const {
-    return (mImageBase!=0);
+bool PEImage::Is64bit() const {
+  return is64bit_;
 }
 
-bool CPEImage::Is64bit() const {
-    return (mPlatform==IMAGE_FILE_MACHINE_AMD64 || mPlatform==IMAGE_FILE_MACHINE_IA64);
+bool PEImage::Load(address_t base) {
+  constexpr uint16_t MZ = 0x5a4d;
+  constexpr uint32_t PE = 0x4550;
+  constexpr uint16_t PE32 = 0x10b;
+  constexpr uint16_t PE32PLUS = 0x20b;
+
+  const auto dos = load_data<IMAGE_DOS_HEADER>(base);
+  if (dos.e_magic != MZ) {
+    dprintf("Invalid DOS header\n");
+    return false;
+  }
+
+  if (load_data<uint32_t>(base + dos.e_lfanew) != PE) {
+    dprintf("Invalid PE header\n");
+    return false;
+  }
+
+  const auto fileHeader = load_data<IMAGE_FILE_HEADER>(
+      base + dos.e_lfanew + sizeof(PE));
+  const auto rvaOptHeader = base
+    + dos.e_lfanew
+    + sizeof(PE)
+    + sizeof(IMAGE_FILE_HEADER);
+  switch (fileHeader.Machine) {
+    default:
+      dprintf("Unsupported platform - %04x.\n", fileHeader.Machine);
+      return false;
+    case IMAGE_FILE_MACHINE_AMD64: {
+      const auto optHeader = load_data<IMAGE_OPTIONAL_HEADER64>(rvaOptHeader);
+      if (optHeader.Magic != PE32PLUS) {
+        dprintf("Invalid optional header\n");
+        return false;
+      }
+      is64bit_ = true;
+      for (int i = 0; i < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++i) {
+        directories_[i] = optHeader.DataDirectory[i];
+      }
+      break;
+    }
+    case IMAGE_FILE_MACHINE_I386: {
+      const auto optHeader = load_data<IMAGE_OPTIONAL_HEADER32>(rvaOptHeader);
+      if (optHeader.Magic != PE32) {
+        dprintf("Invalid optional header\n");
+        return false;
+      }
+      is64bit_ = false;
+      for (int i = 0; i < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++i) {
+        directories_[i] = optHeader.DataDirectory[i];
+      }
+      break;
+    }
+  }
+
+  base_ = base;
+  return true;
 }
 
-WORD CPEImage::GetPlatform() const {
-    return mPlatform;
+std::string PEImage::RvaString(uint32_t offset) const {
+  struct CHAR100 {
+    char p[100];
+  } buf = load_data<CHAR100>(base_ + offset);
+  return buf.p;
 }
 
-void CPEImage::GetVersion(PDWORD FileVersionMS,
-                PDWORD FileVersionLS,
-                PDWORD ProductVersionMS,
-                PDWORD ProductVersionLS) const {
-    if ( FileVersionMS ) *FileVersionMS = mVersion.Value.dwFileVersionMS;
-    if ( FileVersionLS ) *FileVersionLS = mVersion.Value.dwFileVersionLS;
-    if ( ProductVersionMS ) *ProductVersionMS = mVersion.Value.dwProductVersionMS;
-    if ( ProductVersionLS ) *ProductVersionLS = mVersion.Value.dwProductVersionLS;
-}
+void PEImage::DumpIATEntries(std::ostream &s,
+                             const IMAGE_IMPORT_DESCRIPTOR &desc) const {
+  if (!IsInitialized()) return;
 
-bool CPEImage::LoadVersion() {
-    bool Ret = false;
-    ULONG Status = 0;
-    ULONG64 ll = 0;
-    ULONG BytesRead = 0;
+  const uint32_t address_size = Is64bit() ? 8 : 4;
+  const address_t
+    start_name = base_ + desc.OriginalFirstThunk,
+    start_func = base_ + desc.FirstThunk;
+  char symbol[100];
+  ULONG64 displacement;
 
-    CHAR buf1[20];
+  for (int index_entry = 0; ; ++index_entry) {
+    const address_t
+      rva_name = load_pointer(start_name + index_entry * address_size),
+      rva_func = load_pointer(start_func + index_entry * address_size);
+    if (!rva_name) break;
 
-    ULONG i;
-    IMAGE_RESOURCE_DIRECTORY ResDirectory;
-    IMAGE_RESOURCE_DIRECTORY_ENTRY ResDirEntry;
-    IMAGE_RESOURCE_DATA_ENTRY DataEntry;
-    VS_VERSIONINFO VersionInfo;
-
-    if ( !IsInitialized() ) return false;
-
-    ll = mImageBase + mResourceDir.VirtualAddress;
-    Status = ReadMemory(ll, &ResDirectory, sizeof(ResDirectory), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(ResDirectory) ) {
-        dprintf("Failed to read IMAGE_RESOURCE_DIRECTORY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    //
-    // Searching for VS_FILE_INFO directory entry
-    //
-    ZeroMemory(&ResDirEntry, sizeof(ResDirEntry));
-    ll += sizeof(ResDirectory) + ResDirectory.NumberOfNamedEntries * sizeof(ResDirEntry);
-    for ( i=0 ; i<ResDirectory.NumberOfIdEntries ; ++i ) {
-        Status = ReadMemory(ll, &ResDirEntry, sizeof(ResDirEntry), &BytesRead);
-        if ( !Status || BytesRead!=sizeof(ResDirEntry) ) {
-            dprintf("Failed to read IMAGE_RESOURCE_DIRECTORY_ENTRY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            goto exit;
-        }
-
-        if ( !ResDirEntry.NameIsString && MAKEINTRESOURCE(ResDirEntry.Id)==VS_FILE_INFO ) {
-            break;
-        }
-
-        ll += sizeof(ResDirEntry);
-    }
-
-    if ( i>=(ULONG)ResDirectory.NumberOfIdEntries || !ResDirEntry.DataIsDirectory) {
-        dprintf("VS_FILE_INFO resource not found. Failed to determine version.\n");
-        goto exit;
-    }
-
-    // Getting directory from entry
-    ll = mImageBase + mResourceDir.VirtualAddress + ResDirEntry.OffsetToDirectory;
-    Status = ReadMemory(ll, &ResDirectory, sizeof(ResDirectory), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(ResDirectory) ) {
-        dprintf("Failed to read IMAGE_RESOURCE_DIRECTORY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    //
-    // Searching for VS_VERSION_INFO directory entry
-    //
-    ll += sizeof(ResDirectory) + ResDirectory.NumberOfNamedEntries * sizeof(ResDirEntry);
-    for ( i=0 ; i<ResDirectory.NumberOfIdEntries ; ++i ) {
-        Status = ReadMemory(ll, &ResDirEntry, sizeof(ResDirEntry), &BytesRead);
-        if ( !Status || BytesRead!=sizeof(ResDirEntry) ) {
-            dprintf("Failed to read IMAGE_RESOURCE_DIRECTORY_ENTRY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            goto exit;
-        }
-
-        if ( !ResDirEntry.NameIsString && ResDirEntry.Id==VS_VERSION_INFO ) {
-            break;
-        }
-
-        ll += sizeof(ResDirEntry);
-    }
-
-    if ( i>=(ULONG)ResDirectory.NumberOfIdEntries || !ResDirEntry.DataIsDirectory) {
-        dprintf("VS_VERSION_INFO resource not found. Failed to determine version.\n");
-        goto exit;
-    }
-
-    // Getting directory from entry
-    ll = mImageBase + mResourceDir.VirtualAddress + ResDirEntry.OffsetToDirectory;
-    Status = ReadMemory(ll, &ResDirectory, sizeof(ResDirectory), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(ResDirectory) ) {
-        dprintf("Failed to read IMAGE_RESOURCE_DIRECTORY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    // Make sure directory has an entry
-    if ( ResDirectory.NumberOfIdEntries<1 ) {
-        dprintf("VS_VERSION_INFO has not entry.\n");
-        goto exit;
-    }
-
-    // Getting the first entry from directory
-    ll += sizeof(ResDirectory);
-    Status = ReadMemory(ll, &ResDirEntry, sizeof(ResDirEntry), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(ResDirEntry) ) {
-        dprintf("Failed to read IMAGE_RESOURCE_DIRECTORY_ENTRY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    // Make sure VS_VERSION_INFO is not a directory
-    if ( ResDirEntry.DataIsDirectory ) {
-        dprintf("VS_VERSION_INFO is not a data entry.\n");
-        goto exit;
-    }
-
-    // Getting data entry from entry
-    ll = mImageBase + mResourceDir.VirtualAddress + ResDirEntry.OffsetToDirectory;
-    Status = ReadMemory(ll, &DataEntry, sizeof(DataEntry), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(DataEntry) ) {
-        dprintf("Failed to read IMAGE_RESOURCE_DATA_ENTRY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    if ( DataEntry.Size<sizeof(VS_VERSIONINFO) ) {
-        dprintf("VS_VERSION_INFO buffer is short.\n");
-        goto exit;
-    }
-
-    ll = mImageBase + DataEntry.OffsetToData;
-    Status = ReadMemory(ll, &VersionInfo, sizeof(VersionInfo), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(VersionInfo) ) {
-        dprintf("Failed to read VS_VERSION_INFO at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    // https://msdn.microsoft.com/en-us/library/windows/desktop/ms646997(v=vs.85).aspx
-    if ( VersionInfo.Value.dwSignature!=0xFEEF04BD ) {
-        dprintf("VS_VERSION_INFO signature does not match.\n");
-        goto exit;
-    }
-
-    CopyMemory(&mVersion, &VersionInfo, sizeof(mVersion));
-    Ret = true;
-
-exit:
-    return Ret;
-}
-
-// https://msdn.microsoft.com/en-us/magazine/cc301808.aspx
-bool CPEImage::Initialize(ULONG64 ImageBase) {
-    CONST DWORD OFFSET_PEHEADER = 0x3c; // _IMAGE_DOS_HEADER::e_lfanew
-    CONST DWORD PE_SIGNATURE = 0x4550;
-
-    bool Ret = false;
-    ULONG Status = 0;
-    ULONG64 ll = 0;
-    ULONG BytesRead = 0;
-
-    DWORD Rva_PEHeader = 0;
-    DWORD PESignature = 0;
-
-    CHAR buf1[20];
-
-    WORD Platform = 0;
-    IMAGE_DATA_DIRECTORY DataDirectory;
-
-    ll = ImageBase + OFFSET_PEHEADER;
-    Status = ReadMemory(ll, &Rva_PEHeader, sizeof(Rva_PEHeader), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(Rva_PEHeader) ) {
-        dprintf("Failed to access DOS header at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    ll = ImageBase + Rva_PEHeader;
-    Status = ReadMemory(ll, &PESignature, sizeof(PESignature), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(PESignature) || PESignature!=PE_SIGNATURE ) {
-        dprintf("PE header not found at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    ll = ImageBase + Rva_PEHeader + 4; // ntdll!_IMAGE_NT_HEADERS::FileHeader::Machine
-    Status = ReadMemory(ll, &Platform, sizeof(Platform), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(Platform) ) {
-        dprintf("Failed to access PE header at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-
-    if ( Platform!=IMAGE_FILE_MACHINE_AMD64 &&
-         Platform!=IMAGE_FILE_MACHINE_IA64 &&
-         Platform!=IMAGE_FILE_MACHINE_I386 ) {
-        dprintf("Unsupported platform - 0x%04x. Initialization failed.\n", Platform);
-        goto exit;
-    }
-
-    mImageBase = ImageBase;
-    mPlatform = Platform;
-
-    //
-    // Getting RVA to each directory
-    // https://msdn.microsoft.com/en-us/library/windows/desktop/ms680305(v=vs.85).aspx
-    //
-    ll = ImageBase + Rva_PEHeader + 0x18 + (Is64bit() ? 0x70 : 0x60); // pointing to the first entry
-
-    // Import table: 2nd entry
-    ll += sizeof(DataDirectory);
-    Status = ReadMemory(ll, &DataDirectory, sizeof(DataDirectory), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(DataDirectory) ) {
-        dprintf("Failed to read IMAGE_DATA_DIRECTORY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-    CopyMemory(&mImportDir, &DataDirectory, sizeof(DataDirectory));
-
-    // Resource table: 3rd entry
-    ll += sizeof(DataDirectory);
-    Status = ReadMemory(ll, &DataDirectory, sizeof(DataDirectory), &BytesRead);
-    if ( !Status || BytesRead!=sizeof(DataDirectory) ) {
-        dprintf("Failed to read IMAGE_DATA_DIRECTORY at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-        goto exit;
-    }
-    CopyMemory(&mResourceDir, &DataDirectory, sizeof(DataDirectory));
-
-    Ret = true;
-
-exit:
-    return Ret;
-}
-
-ULONG CPEImage::ReadPointerEx(ULONG64 Address, PULONG64 Pointer) const {
-    ULONG cb = 0;
-    if ( Is64bit() ) {
-        return (ReadMemory(Address, (PVOID)Pointer, sizeof(*Pointer), &cb) &&
-                cb == sizeof(*Pointer));
+    if (rva_name & (Is64bit() ? IMAGE_ORDINAL_FLAG64 : IMAGE_ORDINAL_FLAG32)) {
+      const uint16_t ordinal = rva_name & 0xffff;
+      s << std::setw(6) << index_entry
+        << ' '  << std::hex << std::setw(4) << ordinal;
     }
     else {
-        ULONG Pointer32;
-        ULONG Status;
-        Status = ReadMemory(Address,
-                            (PVOID)&Pointer32,
-                            sizeof(Pointer32),
-                            &cb);
-        if (Status && cb == sizeof(Pointer32)) {
-            *Pointer = (ULONG64)(LONG64)(LONG)Pointer32;
-            return 1;
-        }
-        return 0;
+      const auto hint = load_data<uint16_t>(base_ + rva_name);
+      const auto name = RvaString(static_cast<uint32_t>(rva_name) + 2);
+      s << std::setw(6) << index_entry
+        << ' ' << std::hex << std::setw(4) << hint
+        << ' ' << std::setw(32) << name;
     }
+
+    GetSymbol(rva_func, symbol, &displacement);
+    s << ' ' << address_string(rva_func)
+      << ' ' << symbol << '+' << displacement
+      << std::endl;
+  }
 }
 
-void CPEImage::DumpAddressTable(LPCSTR DllName, const IMAGE_IMPORT_DESCRIPTOR &ImportDesc) const {
-    ULONG Status = 0;
-    ULONG64 ll = 0;
-    DWORD BytesRead = 0;
+void PEImage::DumpIAT(const std::string &target) const {
+  if (!IsInitialized()) return;
 
-    ULONG64 DataBuffer = 0;
-    DWORD Ordinal = 0;
-    ULONG64 Displacement = 0;
+  const address_t
+    dir_start = base_ + directories_[ImportTable].VirtualAddress,
+    dir_end = dir_start + directories_[ImportTable].Size;
 
-    CHAR buf1[20];
+  int index_desc = 0;
+  for (address_t desc_raw = dir_start;
+       desc_raw < dir_end;
+       desc_raw += sizeof(IMAGE_IMPORT_DESCRIPTOR), ++index_desc) {
+    const auto desc = load_data<IMAGE_IMPORT_DESCRIPTOR>(desc_raw);
+    if (!desc.Characteristics) break;
 
-    CONST INT MAX_NAMEBUFFER = 100;
-    CHAR NameBuffer[MAX_NAMEBUFFER];
-    CHAR SymbolBuffer[MAX_NAMEBUFFER];
+    const auto thunk_name = RvaString(desc.Name);
 
-    CONST DWORD AddressSize = Is64bit() ? 8 : 4;
-
-    for ( int i = 0 ;; ++i ) {
-        ll = mImageBase + ImportDesc.Characteristics + i * AddressSize;
-        if ( !ReadPointerEx(ll, &DataBuffer) ) {
-            dprintf("Failed to read the name table entry at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            break;
-        }
-
-        if (!DataBuffer) break; // detecting the last sentinel
-
-        if (DataBuffer & (Is64bit() ? IMAGE_ORDINAL_FLAG64 : IMAGE_ORDINAL_FLAG32)) {
-          Ordinal = DataBuffer & 0xffff;
-          NameBuffer[0] = 0;
-        }
-        else {
-          ll = mImageBase + DataBuffer;
-          Status = ReadMemory(ll, &Ordinal, sizeof(WORD), &BytesRead);
-          if ( !Status || BytesRead!=sizeof(WORD) ) {
-              dprintf("Failed to read the ordinal at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-              break;
-          }
-
-          ll = mImageBase + DataBuffer + 2;
-          Status = ReadMemory(ll, &NameBuffer, sizeof(NameBuffer), &BytesRead);
-          if ( !Status || BytesRead!=sizeof(NameBuffer) ) {
-              dprintf("Failed to read the function name at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-              break;
-          }
-        }
-
-        ll = mImageBase + ImportDesc.FirstThunk + i * AddressSize;
-        if ( !ReadPointerEx(ll, &DataBuffer) ) {
-            dprintf("Failed to read the function address at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            break;
-        }
-
-        Displacement = 0;
-        GetSymbol(DataBuffer, SymbolBuffer, &Displacement);
-
-        dprintf("%4d %10s@%04x %-32s %s %s+0x%x\n", i,
-            DllName,
-            Ordinal,
-            NameBuffer,
-            ptos(DataBuffer, buf1, sizeof(buf1)),
-            SymbolBuffer, Displacement);
+    if (target.size() == 0 || target == "*") {
+      std::stringstream s;
+      s << std::dec << std::setw(4) << index_desc
+        << ' ' << address_string(desc_raw)
+        << ' ' << thunk_name
+        << std::endl;
+      dprintf("%s", s.str().c_str());
     }
+
+    if (target == "*" || target == thunk_name) {
+      std::stringstream s;
+      DumpIATEntries(s, desc);
+      dprintf("%s\n", s.str().c_str());
+    }
+  }
 }
 
-#define DUMP_ALL ((LPCSTR)1)
+class ResourceId {
+  enum class Type {Number, String, Any};
+  Type type_;
+  uint16_t number_;
+  std::wstring string_;
 
-void CPEImage::DumpImportTable(LPCSTR DllName) const {
-    ULONG Status = 0;
-    ULONG64 ll = 0;
-    DWORD BytesRead = 0;
+  ResourceId() : type_(Type::Any) {}
 
-    CHAR buf1[20];
-
-    CONST INT MAX_NAMEBUFFER = 100;
-    CHAR NameBuffer[MAX_NAMEBUFFER];
-
-    if ( !IsInitialized() ) return;
-
-    for ( DWORD i = 0 ; i<mImportDir.Size/sizeof(IMAGE_IMPORT_DESCRIPTOR) ; ++i ) {
-        ULONG64 ImportDescAddress = 0;
-        IMAGE_IMPORT_DESCRIPTOR ImportDesc;
-
-        ll = ImportDescAddress = mImageBase + mImportDir.VirtualAddress + i * sizeof(IMAGE_IMPORT_DESCRIPTOR);
-        Status = ReadMemory(ll, &ImportDesc, sizeof(ImportDesc), &BytesRead);
-        if ( !Status || BytesRead!=sizeof(ImportDesc) ) {
-            dprintf("Failed to read IMAGE_IMPORT_DESCRIPTOR at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            break;
-        }
-
-        if (!ImportDesc.Name) break; // detecting the last sentinel
-
-        ZeroMemory(NameBuffer, sizeof(NameBuffer));
-
-        ll = mImageBase + ImportDesc.Name;
-        Status = ReadMemory(ll, NameBuffer, sizeof(NameBuffer), &BytesRead);
-        if ( !Status || BytesRead!=MAX_NAMEBUFFER ) {
-            dprintf("Failed to read the module name at 0x%s\n", ptos(ll, buf1, sizeof(buf1)));
-            break;
-        }
-
-        if ( DllName==0 ) {
-            dprintf("%4d %s %s\n", i, ptos(ImportDescAddress, buf1, sizeof(buf1)), NameBuffer);
-        }
-        else if ( DllName==DUMP_ALL ) {
-            DumpAddressTable(NameBuffer, ImportDesc);
-        }
-        else if ( _stricmp(NameBuffer, DllName)==0 ) {
-            DumpAddressTable(NameBuffer, ImportDesc);
-            break;
-        }
+public:
+  static const ResourceId &Any() {
+    static ResourceId any;
+    return any;
+  }
+  ResourceId(uint16_t id)
+    : type_(Type::Number), number_(id)
+  {}
+  ResourceId(const wchar_t *name) {
+    if (IS_INTRESOURCE(name)) {
+      type_ = Type::Number;
+      number_ = static_cast<uint16_t>(
+        reinterpret_cast<uintptr_t>(name) & 0xffff);
     }
+    else {
+      type_ = Type::String;
+      string_ = name;
+    }
+  }
+
+  ResourceId(ResourceId &&other) = default;
+  ResourceId &ResourceId::operator=(ResourceId &&other) = default;
+
+  bool operator==(const ResourceId &other) const {
+    if (type_ == Type::Any || other.type_ == Type::Any)
+      return true;
+
+    if (type_ != other.type_)
+      return false;
+
+    switch (type_) {
+    case Type::Number:
+      return number_ == other.number_;
+    case Type::String:
+      return string_ == other.string_;
+    default:
+      return false;
+    }
+  }
+
+  bool operator!=(const ResourceId &other) const {
+    return !(*this == other);
+  }
+};
+
+using ResourceIterator = std::function<void (const IMAGE_RESOURCE_DATA_ENTRY &)>;
+
+class ResourceDirectory {
+  class DirectoryEntry {
+    address_t base_;
+    IMAGE_RESOURCE_DIRECTORY_ENTRY data_;
+
+    static std::wstring ResDirString(address_t addr) {
+      const uint16_t len = load_data<uint16_t>(addr);
+      std::wstring ret;
+      if (auto buf = new wchar_t[len + 1]) {
+        ULONG cb = 0;
+        ReadMemory(addr + 2, buf, len * sizeof(wchar_t), &cb);
+        buf[len] = 0;
+        ret = buf;
+        delete [] buf;
+      }
+      return ret;
+    }
+
+  public:
+    DirectoryEntry(address_t base)
+      : base_(base)
+    {}
+
+    void Iterate(address_t addr, const ResourceId &filter, ResourceIterator func) {
+      const auto entry = load_data<IMAGE_RESOURCE_DIRECTORY_ENTRY>(addr);
+      if (!entry.Name) return;
+
+      const ResourceId id = entry.NameIsString
+        ? ResourceId(ResDirString(base_ + entry.NameOffset).c_str())
+        : ResourceId(entry.Id);
+
+      if (id != filter) return;
+
+      if (entry.DataIsDirectory) {
+        // dprintf("Dir -> %p\n", base_ + entry.OffsetToDirectory);
+        ResourceDirectory dir(base_);
+        dir.Iterate(base_ + entry.OffsetToDirectory, ResourceId::Any(), func);
+      }
+      else {
+        // dprintf("Data %p\n", base_ + entry.OffsetToData);
+        const auto data_entry =
+          load_data<IMAGE_RESOURCE_DATA_ENTRY>(base_ + entry.OffsetToData);
+        func(data_entry);
+      }
+    }
+  };
+
+  address_t base_;
+
+public:
+  ResourceDirectory(address_t base)
+    : base_(base)
+  {}
+
+  void Iterate(address_t addr, const ResourceId &filter, ResourceIterator func) {
+    const auto fastLookup = load_data<IMAGE_RESOURCE_DIRECTORY>(addr);
+    const int num_entries =
+      fastLookup.NumberOfNamedEntries + fastLookup.NumberOfIdEntries;
+    const address_t first_entry = addr + sizeof(IMAGE_RESOURCE_DIRECTORY);
+    for (int i = 0; i < num_entries; ++i) {
+      DirectoryEntry entry(base_);
+      entry.Iterate(first_entry + i * sizeof(IMAGE_RESOURCE_DIRECTORY_ENTRY),
+                    filter,
+                    func);
+    }
+  }
+};
+
+VS_FIXEDFILEINFO PEImage::GetVersion() const {
+  VS_FIXEDFILEINFO version{};
+
+  if (!IsInitialized())
+    return version;
+
+  const address_t
+    dir_start = base_ + directories_[ResourceTable].VirtualAddress,
+    dir_end = dir_start + directories_[ResourceTable].Size;
+
+  ResourceDirectory dir(dir_start);
+  dir.Iterate(dir_start,
+              ResourceId(RT_VERSION),
+              [this, &version](const IMAGE_RESOURCE_DATA_ENTRY &data) {
+                struct VS_VERSIONINFO {
+                    WORD wLength;
+                    WORD wValueLength;
+                    WORD wType;
+                    WCHAR szKey[16]; // L"VS_VERSION_INFO"
+                    VS_FIXEDFILEINFO Value;
+                };
+
+                if (data.Size < sizeof(VS_VERSIONINFO))
+                  return;
+
+                const auto ver = load_data<VS_VERSIONINFO>(base_ + data.OffsetToData);
+                if (ver.wValueLength != sizeof(VS_FIXEDFILEINFO)
+                    || ver.Value.dwSignature != 0xFEEF04BD)
+                  return;
+
+                version = ver.Value;
+              });
+
+  return version;
 }
 
 DECLARE_API(imp) {
-    const char Delim[] = " ";
-    char Args[1024];
-    char *Token = NULL;
-    char *NextToken = NULL;
-
-    if ( args && strcpy_s(Args, sizeof(Args), args)==0 ) {
-        Token = strtok_s(Args, Delim, &NextToken);
-        if ( !Token ) return;
-
-        CPEImage pe(GetExpression(Token));
-
-        Token = strtok_s(NULL, Delim, &NextToken);
-
-        if ( pe.IsInitialized() ) {
-            pe.DumpImportTable(Token && _stricmp(Token, "-ALL")==0 ? DUMP_ALL : Token);
-        }
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    PEImage pe(GetExpression(vargs[0].c_str()));
+    if (pe.IsInitialized()) {
+      pe.DumpIAT(vargs.size() >= 2 ? vargs[1] : std::string());
     }
+  }
+}
+
+DECLARE_API(ver) {
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    const auto base = GetExpression(vargs[0].c_str());
+    PEImage pe(base);
+    if (pe.IsInitialized()) {
+      const auto ver = pe.GetVersion();
+      std::stringstream s;
+      s << "ImageBase:       " << address_string(base) << std::endl
+        << "File version:    "
+          << HIWORD(ver.dwFileVersionMS) << '.'
+          << LOWORD(ver.dwFileVersionMS) << '.'
+          << HIWORD(ver.dwFileVersionLS) << '.'
+          << LOWORD(ver.dwFileVersionLS) << std::endl
+        << "Product version: "
+          << HIWORD(ver.dwProductVersionMS) << '.'
+          << LOWORD(ver.dwProductVersionMS) << '.'
+          << HIWORD(ver.dwProductVersionLS) << '.'
+          << LOWORD(ver.dwProductVersionLS) << std::endl
+        << std::endl;
+      dprintf("%s", s.str().c_str());
+    }
+  }
 }

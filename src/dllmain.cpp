@@ -1,8 +1,6 @@
 #define KDEXT_64BIT
 #include <windows.h>
-#include <stdio.h>
 #include <wdbgexts.h>
-#include "bangon.h"
 
 BOOL WINAPI DllMain(_In_ HINSTANCE, _In_ DWORD reason, _In_ LPVOID) {
   switch (reason) {
@@ -31,47 +29,19 @@ LPEXT_API_VERSION ExtensionApiVersion(void) {
   return &ApiVersion;
 }
 
+void init_target_info();
+
 VOID WinDbgExtensionDllInit(PWINDBG_EXTENSION_APIS lpExtensionApis,
                             USHORT MajorVersion,
                             USHORT MinorVersion) {
   ExtensionApis = *lpExtensionApis;
-  return;
-}
-
-LPCSTR ptos(ULONG64 p, LPSTR s, ULONG len) {
-  LPCSTR Ret = NULL;
-  if (HIDWORD(p) == 0 && len >= 9) {
-    sprintf_s(s, len, "%08x", LODWORD(p));
-    Ret = s;
-  }
-  else if (HIDWORD(p) > 0 && len >= 18) {
-    sprintf_s(s, len, "%08x`%08x", HIDWORD(p), LODWORD(p));
-    Ret = s;
-  }
-  return Ret;
+  init_target_info();
 }
 
 DECLARE_API(help) {
   dprintf("!dt <RTL_SPLAY_LINKS*>                 - dump splay tree\n"
           "!ver <Imagebase>                       - display version info\n"
-          "!imp <Imagebase> [-ALL | <Module>]     - display import table\n\n"
+          "!imp <Imagebase> [* | <Module>]        - display import table\n"
+          "\n"
           );
-}
-
-DECLARE_API(ver) {
-  CHAR buf1[20];
-  ULONG64 ImageBase = GetExpression(args);
-  DWORD FileMS = 0;
-  DWORD FileLS = 0;
-  DWORD ProdMS = 0;
-  DWORD ProdLS = 0;
-
-  CPEImage pe(ImageBase);
-  if (pe.IsInitialized() && pe.LoadVersion()) {
-    pe.GetVersion(&FileMS, &FileLS, &ProdMS, &ProdLS);
-    dprintf("ImageBase:      %s\n", ptos(ImageBase, buf1, sizeof(buf1)));
-    dprintf("Platform:       %04x\n", pe.GetPlatform());
-    dprintf("FileVersion:    %08x.%08x\n", FileMS, FileLS);
-    dprintf("ProductVersion: %08x.%08x\n", ProdMS, ProdLS);
-  }
 }
