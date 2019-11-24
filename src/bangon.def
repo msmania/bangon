@@ -8,7 +8,7 @@ EXPORTS
 	ExtensionApiVersion
 	help
 	dt
-	ver
 	imp
 	ts
+	ver
 	runtests

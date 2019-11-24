@@ -1,3 +1,5 @@
+#pragma once
+
 class PEImage final {
   address_t base_{};
   bool is64bit_{};
@@ -11,6 +13,8 @@ class PEImage final {
 
 public:
   PEImage(address_t base);
+
+  operator bool() const;
 
   bool IsInitialized() const;
   bool Is64bit() const;

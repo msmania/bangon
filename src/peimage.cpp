@@ -33,6 +33,10 @@ PEImage::PEImage(address_t base) {
   Load(base);
 }
 
+PEImage::operator bool() const {
+  return !!base_;
+}
+
 bool PEImage::IsInitialized() const {
   return !!base_;
 }
@@ -341,8 +345,7 @@ VS_FIXEDFILEINFO PEImage::GetVersion() const {
 DECLARE_API(imp) {
   const auto vargs = get_args(args);
   if (vargs.size() > 0) {
-    PEImage pe(GetExpression(vargs[0].c_str()));
-    if (pe.IsInitialized()) {
+    if (PEImage pe = GetExpression(vargs[0].c_str())) {
       pe.DumpIAT(vargs.size() >= 2 ? vargs[1] : std::string());
     }
   }
@@ -352,8 +355,7 @@ DECLARE_API(ver) {
   const auto vargs = get_args(args);
   if (vargs.size() > 0) {
     const auto base = GetExpression(vargs[0].c_str());
-    PEImage pe(base);
-    if (pe.IsInitialized()) {
+    if (PEImage pe = base) {
       const auto ver = pe.GetVersion();
       std::stringstream s;
       s << "ImageBase:       " << address_string(base) << std::endl
