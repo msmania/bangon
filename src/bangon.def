@@ -8,6 +8,7 @@ EXPORTS
 	ExtensionApiVersion
 	help
 	dt
+	ex
 	imp
 	ts
 	ver

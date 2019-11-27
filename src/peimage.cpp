@@ -118,8 +118,6 @@ void PEImage::DumpIATEntries(int index,
   const address_t
     start_name = base_ + desc.OriginalFirstThunk,
     start_func = base_ + desc.FirstThunk;
-  char symbol[100];
-  ULONG64 displacement;
 
   for (int index_entry = 0; ; ++index_entry) {
     const address_t
@@ -139,9 +137,7 @@ void PEImage::DumpIATEntries(int index,
         << ' ' << name << '@' << hint;
     }
 
-    GetSymbol(rva_func, symbol, &displacement);
-    s << ' ' << address_string(rva_func) << ' ' << symbol;
-    if (displacement) s << '+' << displacement;
+    DumpAddressAndSymbol(s, rva_func);
     s << std::endl;
   }
 }
@@ -175,6 +171,126 @@ void PEImage::DumpIAT(const std::string &target) const {
       std::stringstream s;
       DumpIATEntries(index_desc, s, desc);
       dprintf("%s\n", s.str().c_str());
+    }
+  }
+}
+
+#include "exception_handling.h"
+
+void DumpScopeTable(std::ostream &s, address_t scope_table, address_t base) {
+  address_t addr = scope_table;
+  auto count = load_data<uint32_t>(addr);
+  addr += sizeof(uint32_t);
+
+  if (count > 100) {
+    // Probably this data is not ScopeTable.
+    s << "  Too many records (" << count << ")!" << std::endl;
+    count = 100;
+  }
+
+  for (uint32_t i = 0; i < count; ++i) {
+    using RecordType = std::remove_reference<
+        decltype(*SCOPE_TABLE_AMD64::ScopeRecord)>::type;
+
+    const auto record = load_data<RecordType>(addr);
+    s << "  ScopeRecord[" << std::dec << i << "] "
+      << address_string(addr)
+      << " = {" << std::endl
+      << "    [ " << address_string(base + record.BeginAddress)
+      << ' ' << address_string(base + record.EndAddress)
+      << " )"
+      << std::endl;
+
+    s << "    Filter:  ";
+    DumpAddressAndSymbol(s, base + record.HandlerAddress);
+    s << "\n    Handler: ";
+    DumpAddressAndSymbol(s, base + record.JumpTarget);
+    s << "\n  }\n";
+    addr += sizeof(RecordType);
+  }
+}
+
+void DumpUnwindInfo(int index,
+                    std::ostream &s,
+                    address_t base,
+                    const RUNTIME_FUNCTION_AMD64 &entry,
+                    address_t exception_pc) {
+  address_t addr = base + entry.UnwindData;
+  const auto info = load_data<UNWIND_INFO>(addr);
+
+  if (info.Version >= 2) {
+    s << "Unsupported UNWIND_INFO::Version: " << info.Version << std::endl;
+    return;
+  }
+
+  s << "UNWIND_INFO[" << std::dec << index << "] "
+    << address_string(addr)
+    << " [ "
+    << address_string(base + entry.BeginAddress) << ' '
+    << address_string(base + entry.EndAddress) << " )" << std::endl
+    << "  Version       = " << static_cast<int>(info.Version) << std::endl
+    << "  Flags         = " << static_cast<int>(info.Flags) << std::endl
+    << "  SizeOfProlog  = " << static_cast<int>(info.SizeOfProlog) << std::endl
+    << "  FrameRegister = " << static_cast<int>(info.FrameRegister) << std::endl
+    << "  FrameOffset   = " << static_cast<int>(info.FrameOffset) << std::endl;
+
+  addr += offsetof(UNWIND_INFO, UnwindCode);
+
+  for (int i = 0; i < info.CountOfCodes; ++i) {
+    const auto unwind = load_data<UNWIND_CODE>(addr + sizeof(UNWIND_CODE) * i);
+    s << "  UnwindCode[" << i << "] = "
+      << "{CodeOffset:" << static_cast<int>(unwind.CodeOffset)
+      << " UnwindOp:" << static_cast<int>(unwind.UnwindOp)
+      << " OpInfo:" << static_cast<int>(unwind.OpInfo)
+      << "}\n";
+  }
+
+  if (info.Flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER)) {
+    int n = (info.CountOfCodes + 1) & ~1;
+    addr += sizeof(UNWIND_CODE) * n;
+    const auto rva_handler = load_data<uint32_t>(addr);
+    addr += sizeof(uint32_t);
+
+    s << "  ExceptionHandler = ";
+    DumpAddressAndSymbol(s, base + rva_handler);
+    s << std::endl
+      << "  HandlerData = " << address_string(addr) << std::endl;
+
+    char symbol[1024];
+    uint64_t displacement;
+    GetSymbol(base + rva_handler, symbol, &displacement);
+    if (displacement == 0 && strstr(symbol, "_C_specific_handler")) {
+      // If a handler is _C_specific_handler, we know what HandlerData is.
+      DumpScopeTable(s, addr, base);
+    }
+  }
+}
+
+void PEImage::DumpExceptionRecords(address_t exception_pc) const {
+  if (!IsInitialized()) return;
+
+  if (!Is64bit()) {
+    dprintf("Only x64 is supported for now.  Sorry!\n");
+    return;
+  }
+
+  const address_t
+    dir_start = base_ + directories_[ExceptionTable].VirtualAddress,
+    dir_end = dir_start + directories_[ExceptionTable].Size;
+
+  int index = 0;
+  for (address_t entry_raw = dir_start;
+       entry_raw < dir_end;
+       entry_raw += sizeof(RUNTIME_FUNCTION_AMD64), ++index) {
+    const auto entry = load_data<RUNTIME_FUNCTION_AMD64>(entry_raw);
+    if (entry.UnwindData
+        && (exception_pc == 0
+            || (exception_pc >= base_ + entry.BeginAddress
+                && exception_pc < base_ + entry.EndAddress))) {
+      std::stringstream s;
+      s << '@' << address_string(entry_raw) << std::endl;
+      DumpUnwindInfo(index, s, base_, entry, exception_pc);
+      dprintf("%s", s.str().c_str());
     }
   }
 }
@@ -347,6 +463,16 @@ DECLARE_API(imp) {
   if (vargs.size() > 0) {
     if (PEImage pe = GetExpression(vargs[0].c_str())) {
       pe.DumpIAT(vargs.size() >= 2 ? vargs[1] : std::string());
+    }
+  }
+}
+
+DECLARE_API(ex) {
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    if (PEImage pe = GetExpression(vargs[0].c_str())) {
+      pe.DumpExceptionRecords(vargs.size() >= 2
+          ? GetExpression(vargs[1].c_str()) : 0);
     }
   }
 }

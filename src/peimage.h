@@ -20,5 +20,6 @@ public:
   bool Is64bit() const;
 
   void DumpIAT(const std::string &target) const;
+  void DumpExceptionRecords(address_t exception_pc) const;
   VS_FIXEDFILEINFO GetVersion() const;
 };

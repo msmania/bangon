@@ -1,4 +1,5 @@
 #include <vector>
+#include <iostream>
 #include <string>
 #include <stdio.h>
 #include <windows.h>
@@ -36,6 +37,15 @@ address_string::address_string(address_t addr) {
 
 address_string::operator const char *() const {
   return buffer_;
+}
+
+void DumpAddressAndSymbol(std::ostream &s, address_t addr) {
+  char symbol[1024];
+  ULONG64 displacement;
+  GetSymbol(addr, symbol, &displacement);
+  s << address_string(addr)
+    << ' ' << symbol;
+  if (displacement) s << "+0x" << std::hex << displacement;
 }
 
 void Log(const wchar_t* format, ...) {

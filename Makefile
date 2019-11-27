@@ -29,6 +29,7 @@ LIBS=\
 	dbgeng.lib\
 
 # warning C4100: unreferenced formal parameter
+# warning C4201: nonstandard extension used: nameless struct/union
 CFLAGS=\
 	/nologo\
 	/Zi\
@@ -41,6 +42,7 @@ CFLAGS=\
 	/EHsc\
 	/W4\
 	/wd4100\
+	/wd4201\
 
 LFLAGS=\
 	/NOLOGO\

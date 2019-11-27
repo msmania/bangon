@@ -42,6 +42,7 @@ DECLARE_API(help) {
   dprintf("!dt <RTL_SPLAY_LINKS*>                 - dump splay tree\n"
           "!ver <Imagebase>                       - display version info\n"
           "!imp <Imagebase> [* | <Module>]        - display import table\n"
+          "!ex  <Imagebase> [<Code Address>]      - display SEH info\n"
           "\n"
           );
 }
