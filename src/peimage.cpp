@@ -177,7 +177,11 @@ void PEImage::DumpIAT(const std::string &target) const {
 
 #include "exception_handling.h"
 
-void DumpScopeTable(std::ostream &s, address_t scope_table, address_t base) {
+static
+void DumpScopeTable(std::ostream &s,
+                    address_t scope_table,
+                    address_t base,
+                    address_t exception_pc) {
   address_t addr = scope_table;
   auto count = load_data<uint32_t>(addr);
   addr += sizeof(uint32_t);
@@ -194,8 +198,13 @@ void DumpScopeTable(std::ostream &s, address_t scope_table, address_t base) {
 
     const auto record = load_data<RecordType>(addr);
     s << "  ScopeRecord[" << std::dec << i << "] "
-      << address_string(addr)
-      << " = {" << std::endl
+      << address_string(addr);
+    if (exception_pc != 0
+        && exception_pc >= base + record.BeginAddress
+        && exception_pc < base + record.EndAddress) {
+      s << " <<<<";
+    }
+    s << std::endl
       << "    [ " << address_string(base + record.BeginAddress)
       << ' ' << address_string(base + record.EndAddress)
       << " )"
@@ -205,11 +214,12 @@ void DumpScopeTable(std::ostream &s, address_t scope_table, address_t base) {
     DumpAddressAndSymbol(s, base + record.HandlerAddress);
     s << "\n    Handler: ";
     DumpAddressAndSymbol(s, base + record.JumpTarget);
-    s << "\n  }\n";
+    s << std::endl;
     addr += sizeof(RecordType);
   }
 }
 
+static
 void DumpUnwindInfo(int index,
                     std::ostream &s,
                     address_t base,
@@ -261,7 +271,7 @@ void DumpUnwindInfo(int index,
     GetSymbol(base + rva_handler, symbol, &displacement);
     if (displacement == 0 && strstr(symbol, "_C_specific_handler")) {
       // If a handler is _C_specific_handler, we know what HandlerData is.
-      DumpScopeTable(s, addr, base);
+      DumpScopeTable(s, addr, base, exception_pc);
     }
   }
 }
