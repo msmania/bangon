@@ -9,6 +9,7 @@ EXPORTS
 	help
 	dt
 	ex
+	ext
 	imp
 	ts
 	ver

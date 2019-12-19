@@ -175,6 +175,61 @@ void PEImage::DumpIAT(const std::string &target) const {
   }
 }
 
+void PEImage::DumpExportTable() const {
+  if (!IsInitialized()) return;
+
+  const address_t
+    dir_start = base_ + directories_[ExportTable].VirtualAddress,
+    dir_end = dir_start + directories_[ExportTable].Size;
+
+  const auto dir_table = load_data<IMAGE_EXPORT_DIRECTORY>(dir_start);
+  dprintf("%s\n", RvaString(dir_table.Name).c_str());
+
+  struct ExportTable {
+    DWORD entry_;
+    std::string name_;
+  };
+  std::vector<ExportTable> table(dir_table.NumberOfFunctions);
+  for (DWORD i = 0; i < dir_table.NumberOfFunctions; ++i) {
+    table[i].entry_ =
+      load_data<DWORD>(base_ + dir_table.AddressOfFunctions + i * 4);
+  }
+
+  for (DWORD i = 0; i < dir_table.NumberOfNames; ++i) {
+    const int index = load_data<uint16_t>(
+      base_ + dir_table.AddressOfNameOrdinals + i * 2);
+    const auto rva_name =
+      load_data<DWORD>(base_ + dir_table.AddressOfNames + i * 4);
+    table[index].name_ = RvaString(rva_name);
+  }
+
+  for (DWORD i = 0; i < dir_table.NumberOfFunctions; ++i) {
+    if (!table[i].entry_) continue;
+
+    const bool is_forwarder =
+      base_ + table[i].entry_ >= dir_start
+      && base_ + table[i].entry_ < dir_end;
+
+    std::stringstream s;
+    s << std::dec << std::setw(4) << i
+      << ' ' << address_string(base_ + dir_table.AddressOfFunctions + i * 4)
+      << (is_forwarder ? " * " : " ")
+      << (table[i].name_.size() > 0 ? table[i].name_ : "[NONAME]")
+      << ' ';
+
+    if (is_forwarder) {
+      // Forwarder RVA
+      s << RvaString(table[i].entry_);
+    }
+    else {
+      // Export RVA
+      DumpAddressAndSymbol(s, base_ + table[i].entry_);
+    }
+
+    dprintf("%s\n", s.str().c_str());
+  }
+}
+
 #include "exception_handling.h"
 
 static
@@ -473,6 +528,15 @@ DECLARE_API(imp) {
   if (vargs.size() > 0) {
     if (PEImage pe = GetExpression(vargs[0].c_str())) {
       pe.DumpIAT(vargs.size() >= 2 ? vargs[1] : std::string());
+    }
+  }
+}
+
+DECLARE_API(ext) {
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    if (PEImage pe = GetExpression(vargs[0].c_str())) {
+      pe.DumpExportTable();
     }
   }
 }

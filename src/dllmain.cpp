@@ -39,10 +39,11 @@ VOID WinDbgExtensionDllInit(PWINDBG_EXTENSION_APIS lpExtensionApis,
 }
 
 DECLARE_API(help) {
-  dprintf("!dt  <RTL_SPLAY_LINKS*>                - dump splay tree\n"
-          "!ex  <Imagebase> [<Code Address>]      - display SEH info\n"
-          "!imp <Imagebase> [* | <Module>]        - display import table\n"
-          "!ver <Imagebase>                       - display version info\n"
-          "\n"
-          );
+  dprintf(
+    "!dt  <RTL_SPLAY_LINKS*>            - dump splay tree\n"
+    "!ex  <Imagebase> [<Code Address>]  - display SEH info\n"
+    "!ext <Imagebase>                   - display export table\n"
+    "!imp <Imagebase> [* | <Module>]    - display import table\n"
+    "!ver <Imagebase>                   - display version info\n"
+    "\n");
 }
