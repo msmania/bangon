@@ -122,7 +122,8 @@ void PEImage::DumpIATEntries(int index,
   for (int index_entry = 0; ; ++index_entry) {
     const address_t
       rva_name = load_pointer(start_name + index_entry * address_size),
-      rva_func = load_pointer(start_func + index_entry * address_size);
+      func_entry = start_func + index_entry * address_size,
+      rva_func = load_pointer(func_entry);
     if (!rva_name) break;
 
     if (rva_name & (Is64bit() ? IMAGE_ORDINAL_FLAG64 : IMAGE_ORDINAL_FLAG32)) {
@@ -136,6 +137,8 @@ void PEImage::DumpIATEntries(int index,
       s << index << '.' << index_entry
         << ' ' << name << '@' << hint;
     }
+
+    s << ' ' << address_string(func_entry) << ' ';
 
     DumpAddressAndSymbol(s, rva_func);
     s << std::endl;
