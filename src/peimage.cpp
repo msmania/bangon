@@ -1,6 +1,7 @@
-#include <sstream>
 #include <functional>
 #include <iomanip>
+#include <sstream>
+#include <vector>
 #define KDEXT_64BIT
 #include <windows.h>
 #include <wdbgexts.h>
@@ -178,8 +179,93 @@ void PEImage::DumpIAT(const std::string &target) const {
   }
 }
 
+template<typename T>
+static void DumpLoadConfigInternal(address_t base, address_t dir_start) {
+  const auto directory = load_data<T>(dir_start);
+
+  {
+    address_t addr;
+    std::stringstream s;
+
+    addr = directory.GuardCFCheckFunctionPointer;
+    s << "GuardCFCheckFunctionPointer    "
+      << address_string(addr);
+    if (addr) {
+      s << ' ';
+      DumpAddressAndSymbol(s, load_pointer(addr));
+    }
+    s << std::endl;
+
+    addr = directory.GuardCFDispatchFunctionPointer;
+    s << "GuardCFDispatchFunctionPointer "
+      << address_string(addr);
+    if (addr) {
+      s << ' ';
+      DumpAddressAndSymbol(s, load_pointer(addr));
+    }
+    s << std::endl;
+
+    s << "GuardFlags                     "
+      << std::hex << std::setw(8) << directory.GuardFlags << std::endl
+      << "GuardCFFunctionTable           "
+      << address_string(directory.GuardCFFunctionTable) << std::endl;
+
+    dprintf("%s", s.str().c_str());
+  }
+
+  // https://docs.microsoft.com/en-us/windows/win32/secbp/pe-metadata
+  uint32_t item_size =
+    directory.GuardFlags & IMAGE_GUARD_CF_FUNCTION_TABLE_SIZE_MASK;
+  item_size >>= IMAGE_GUARD_CF_FUNCTION_TABLE_SIZE_SHIFT;
+  item_size += sizeof(DWORD);
+
+  const auto table_size =
+    static_cast<uint32_t>(item_size * directory.GuardCFFunctionCount);
+  std::vector<uint8_t> buf(table_size);
+
+  ULONG cb = 0;
+  if (!ReadMemory(directory.GuardCFFunctionTable,
+                  buf.data(), table_size, &cb)) {
+    Log(L"Failed to load GuardCFFunctionTable\n");
+    return;
+  }
+
+  uint8_t *p = buf.data();
+  for (DWORD i = 0; i < directory.GuardCFFunctionCount; ++i) {
+    uint32_t entry[2] = {};
+    memcpy(entry, p, item_size);
+
+    std::stringstream s;
+    s << std::dec << std::setw(4) << i
+      << std::setw(2) << entry[1] << ' ';
+    DumpAddressAndSymbol(s, base + entry[0]);
+    dprintf("%s\n", s.str().c_str());
+
+    p += item_size;
+  }
+}
+
+void PEImage::DumpLoadConfig() const {
+  if (!IsInitialized()) return;
+
+  if (!directories_[LoadConfiguration].VirtualAddress) return;
+
+  const address_t
+    dir_start = base_ + directories_[LoadConfiguration].VirtualAddress,
+    dir_end = dir_start + directories_[LoadConfiguration].Size;
+
+  if (Is64bit()) {
+    DumpLoadConfigInternal<IMAGE_LOAD_CONFIG_DIRECTORY64>(base_, dir_start);
+  }
+  else {
+    DumpLoadConfigInternal<IMAGE_LOAD_CONFIG_DIRECTORY32>(base_, dir_start);
+  }
+}
+
 void PEImage::DumpExportTable() const {
   if (!IsInitialized()) return;
+
+  if (!directories_[ExportTable].VirtualAddress) return;
 
   const address_t
     dir_start = base_ + directories_[ExportTable].VirtualAddress,
@@ -524,6 +610,15 @@ VS_FIXEDFILEINFO PEImage::GetVersion() const {
               });
 
   return version;
+}
+
+DECLARE_API(cfg) {
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    if (PEImage pe = GetExpression(vargs[0].c_str())) {
+      pe.DumpLoadConfig();
+    }
+  }
 }
 
 DECLARE_API(imp) {

@@ -7,7 +7,8 @@ Happy debugging! :sunglasses:
 ### Commands
 
 ```
-0:000> !on.help
+0:000> !help
+!cfg <ImageBase>                   - dump GuardCFFunctionTable
 !dt  <RTL_SPLAY_LINKS*>            - dump splay tree
 !ex  <Imagebase> [<Code Address>]  - display SEH info
 !ext <Imagebase>                   - display export table

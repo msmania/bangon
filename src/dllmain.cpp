@@ -40,6 +40,7 @@ VOID WinDbgExtensionDllInit(PWINDBG_EXTENSION_APIS lpExtensionApis,
 
 DECLARE_API(help) {
   dprintf(
+    "!cfg <ImageBase>                   - dump GuardCFFunctionTable\n"
     "!dt  <RTL_SPLAY_LINKS*>            - dump splay tree\n"
     "!ex  <Imagebase> [<Code Address>]  - display SEH info\n"
     "!ext <Imagebase>                   - display export table\n"
