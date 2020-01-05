@@ -12,6 +12,7 @@ EXPORTS
 	ex
 	ext
 	imp
+	sec
 	ts
 	ver
 	runtests

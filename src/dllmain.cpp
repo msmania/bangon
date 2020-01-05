@@ -45,6 +45,7 @@ DECLARE_API(help) {
     "!ex  <Imagebase> [<Code Address>]  - display SEH info\n"
     "!ext <Imagebase>                   - display export table\n"
     "!imp <Imagebase> [* | <Module>]    - display import table\n"
+    "!sec <Imagebase>                   - display section table\n"
     "!ver <Imagebase>                   - display version info\n"
     "\n");
 }

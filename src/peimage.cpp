@@ -69,12 +69,14 @@ bool PEImage::Load(address_t base) {
     + dos.e_lfanew
     + sizeof(PE)
     + sizeof(IMAGE_FILE_HEADER);
+  address_t sectionHeader = rvaOptHeader;
   switch (fileHeader.Machine) {
     default:
       dprintf("Unsupported platform - %04x.\n", fileHeader.Machine);
       return false;
     case IMAGE_FILE_MACHINE_AMD64: {
       const auto optHeader = load_data<IMAGE_OPTIONAL_HEADER64>(rvaOptHeader);
+      sectionHeader += sizeof(IMAGE_OPTIONAL_HEADER64);
       if (optHeader.Magic != PE32PLUS) {
         dprintf("Invalid optional header\n");
         return false;
@@ -87,6 +89,7 @@ bool PEImage::Load(address_t base) {
     }
     case IMAGE_FILE_MACHINE_I386: {
       const auto optHeader = load_data<IMAGE_OPTIONAL_HEADER32>(rvaOptHeader);
+      sectionHeader += sizeof(IMAGE_OPTIONAL_HEADER32);
       if (optHeader.Magic != PE32) {
         dprintf("Invalid optional header\n");
         return false;
@@ -97,6 +100,14 @@ bool PEImage::Load(address_t base) {
       }
       break;
     }
+  }
+
+  for (;;) {
+    const auto sig = load_data<uint64_t>(sectionHeader);
+    if (!sig) break;
+    const auto section = load_data<IMAGE_SECTION_HEADER>(sectionHeader);
+    sections_.push_back(section);
+    sectionHeader += sizeof(IMAGE_SECTION_HEADER);
   }
 
   base_ = base;
@@ -612,6 +623,91 @@ VS_FIXEDFILEINFO PEImage::GetVersion() const {
   return version;
 }
 
+int PEImage::LookupSection(uint32_t rva, uint32_t size) const {
+  struct Comparer {
+    uint32_t start_, end_;
+    Comparer(uint32_t rva, uint32_t size)
+      : start_(rva), end_(rva + size) {}
+    bool operator()(const IMAGE_SECTION_HEADER &section) const {
+      return
+        start_ >= section.VirtualAddress
+        && end_ <= section.VirtualAddress + section.Misc.VirtualSize;
+    }
+  };
+  auto it = std::find_if(sections_.begin(),
+                         sections_.end(),
+                         Comparer(rva, size));
+  return it == sections_.end() ? -1 : static_cast<int>(it - sections_.begin());
+}
+
+void PEImage::DumpSectionTable() const {
+  if (!IsInitialized()) return;
+
+  dprintf("Sections:\n");
+  for (int i = 0; i < sections_.size(); ++i) {
+    std::stringstream s;
+
+    char name[IMAGE_SIZEOF_SHORT_NAME + 1];
+    memcpy(name, sections_[i].Name, IMAGE_SIZEOF_SHORT_NAME);
+    name[IMAGE_SIZEOF_SHORT_NAME] = 0;
+    s << std::setw(3) << i
+      << ' ' << std::left << std::setw(9) << name
+      << "rva: "
+      << std::hex << sections_[i].VirtualAddress
+      << '-' << sections_[i].VirtualAddress + sections_[i].Misc.VirtualSize
+      << " file: "
+      << sections_[i].PointerToRawData
+      << '-' << sections_[i].PointerToRawData + sections_[i].SizeOfRawData;
+
+    dprintf("%s\n", s.str().c_str());
+  }
+
+  const char *DirNames[]= {
+    "Export",
+    "Import",
+    "Resource",
+    "Exception",
+    "Certificate",
+    "BaseRelocation",
+    "DebugInfo",
+    "ArchitectureSpecific",
+    "GlobalPointerRegister",
+    "Tls",
+    "LoadConfig",
+    "BoundImportTable",
+    "IAT",
+    "DelayImportDescriptor",
+    "CLRHeader",
+    "Reserved",
+  };
+
+  dprintf("\nDirectories:\n");
+  for (int i = 0; i < IMAGE_NUMBEROF_DIRECTORY_ENTRIES; ++i) {
+    std::stringstream s;
+    s << std::setw(3) << i
+      << ' ' << std::left << std::setw(24) << DirNames[i];
+
+    if (directories_[i].VirtualAddress && directories_[i].Size) {
+      s << std::hex << directories_[i].VirtualAddress
+        << '-' << directories_[i].VirtualAddress + directories_[i].Size;
+
+      auto index = LookupSection(
+        directories_[i].VirtualAddress, directories_[i].Size);
+      if (index >= 0) {
+        char name[IMAGE_SIZEOF_SHORT_NAME + 2];
+        name[0] = ' ';
+        memcpy(name + 1, sections_[index].Name, IMAGE_SIZEOF_SHORT_NAME);
+        name[IMAGE_SIZEOF_SHORT_NAME + 1] = 0;
+        s << name;
+      }
+    }
+
+    dprintf("%s\n", s.str().c_str());
+  }
+
+  dprintf("\n");
+}
+
 DECLARE_API(cfg) {
   const auto vargs = get_args(args);
   if (vargs.size() > 0) {
@@ -635,6 +731,15 @@ DECLARE_API(ext) {
   if (vargs.size() > 0) {
     if (PEImage pe = GetExpression(vargs[0].c_str())) {
       pe.DumpExportTable();
+    }
+  }
+}
+
+DECLARE_API(sec) {
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    if (PEImage pe = GetExpression(vargs[0].c_str())) {
+      pe.DumpSectionTable();
     }
   }
 }
