@@ -19,6 +19,7 @@ OBJS=\
 	$(OBJDIR)\common.obj\
 	$(OBJDIR)\dllmain.obj\
 	$(OBJDIR)\dt.obj\
+	$(OBJDIR)\nt.obj\
 	$(OBJDIR)\peimage.obj\
 	$(OBJDIR)\symbol_manager.obj\
 	$(OBJDIR)\thread.obj\

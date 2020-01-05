@@ -12,6 +12,7 @@ EXPORTS
 	ex
 	ext
 	imp
+	ntvad
 	sec
 	ts
 	ver
