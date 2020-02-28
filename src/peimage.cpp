@@ -102,7 +102,7 @@ bool PEImage::Load(address_t base) {
     }
   }
 
-  for (;;) {
+  for (int i = 0; i < fileHeader.NumberOfSections; ++i) {
     const auto sig = load_data<uint64_t>(sectionHeader);
     if (!sig) break;
     const auto section = load_data<IMAGE_SECTION_HEADER>(sectionHeader);
