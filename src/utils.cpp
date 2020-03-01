@@ -31,6 +31,25 @@ const char *ptos(uint64_t p, char *s, uint32_t len) {
   return s;
 }
 
+std::string UnixTimeToSystemTime(uint32_t t) {
+  ULARGE_INTEGER n;
+  n.QuadPart = 116444736000000000ull + 10000000ull * t;
+  FILETIME ft = {n.LowPart, n.HighPart};
+  SYSTEMTIME st;
+  FileTimeToSystemTime(&ft, &st);
+
+  char buf[32];
+  sprintf(buf,
+          "%04d-%02d-%02d %02d:%02d:%02d UTC",
+          st.wYear,
+          st.wMonth,
+          st.wDay,
+          st.wHour,
+          st.wMinute,
+          st.wSecond);
+  return buf;
+}
+
 address_string::address_string(address_t addr) {
   ptos(addr, buffer_, sizeof(buffer_));
 }

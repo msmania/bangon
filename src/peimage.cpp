@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <functional>
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 #define KDEXT_64BIT
 #include <windows.h>
@@ -8,6 +10,14 @@
 
 #include "common.h"
 #include "peimage.h"
+
+template<int N = 100>
+std::string RvaString(address_t base, uint32_t offset) {
+  struct CHAR_N {
+    char p[N];
+  } buf = load_data<CHAR_N>(base + offset);
+  return buf.p;
+}
 
 // https://docs.microsoft.com/en-us/windows/win32/debug/pe-format
 // https://docs.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_data_directory
@@ -114,13 +124,6 @@ bool PEImage::Load(address_t base) {
   return true;
 }
 
-std::string PEImage::RvaString(uint32_t offset) const {
-  struct CHAR100 {
-    char p[100];
-  } buf = load_data<CHAR100>(base_ + offset);
-  return buf.p;
-}
-
 void PEImage::DumpIATEntries(int index,
                              std::ostream &s,
                              const IMAGE_IMPORT_DESCRIPTOR &desc) const {
@@ -145,7 +148,7 @@ void PEImage::DumpIATEntries(int index,
     }
     else {
       const auto hint = load_data<uint16_t>(base_ + rva_name);
-      const auto name = RvaString(static_cast<uint32_t>(rva_name) + 2);
+      const auto name = RvaString(base_, static_cast<uint32_t>(rva_name) + 2);
       s << index << '.' << index_entry
         << ' ' << name << '@' << hint;
     }
@@ -157,8 +160,67 @@ void PEImage::DumpIATEntries(int index,
   }
 }
 
+void PutBoundDirEntry(PEImage::BoundDirT &dictionary,
+                      const std::string &key, DWORD data) {
+  std::string lower = key;
+  std::transform(lower.begin(), lower.end(),
+                 lower.begin(),
+                 [](char c) {return static_cast<char>(std::tolower(c));}
+                 );
+  dictionary.emplace(lower, data);
+}
+
+bool LookupBoundDirEntry(PEImage::BoundDirT &dictionary,
+                         const std::string &key,
+                         DWORD *data = nullptr) {
+  std::string lower = key;
+  std::transform(lower.begin(), lower.end(),
+                 lower.begin(),
+                 [](char c) {return static_cast<char>(std::tolower(c));}
+                 );
+
+  auto it = dictionary.find(lower);
+  if (it == dictionary.end()) return false;
+
+  if (data) *data = it->second;
+  return true;
+}
+
+PEImage::BoundDirT PEImage::LoadBoundImportDirectory() const {
+  std::unordered_map<std::string, DWORD> dic;
+
+  if (!IsInitialized()) return dic;
+
+  const address_t
+    dir_start = base_ + directories_[BoundImportTable].VirtualAddress,
+    dir_end = dir_start + directories_[BoundImportTable].Size;
+
+  int index_desc = 0;
+  for (address_t desc_raw = dir_start;
+       desc_raw < dir_end;
+       desc_raw += sizeof(IMAGE_BOUND_IMPORT_DESCRIPTOR), ++index_desc) {
+    const auto desc = load_data<IMAGE_BOUND_IMPORT_DESCRIPTOR>(desc_raw);
+    if (!desc.OffsetModuleName) break;
+
+    auto name = RvaString(dir_start, desc.OffsetModuleName);
+    PutBoundDirEntry(dic, name, desc.TimeDateStamp);
+
+    for (int i = 0;
+         i < desc.NumberOfModuleForwarderRefs;
+         ++i,
+         desc_raw += sizeof(IMAGE_BOUND_FORWARDER_REF)) {
+      // We're not interested in forwarder entries.  Skip.
+      // const auto forwarder = load_data<IMAGE_BOUND_FORWARDER_REF>(desc_raw);
+    }
+  }
+
+  return dic;
+}
+
 void PEImage::DumpIAT(const std::string &target) const {
   if (!IsInitialized()) return;
+
+  auto boundDir = LoadBoundImportDirectory();
 
   const address_t
     dir_start = base_ + directories_[ImportTable].VirtualAddress,
@@ -171,14 +233,23 @@ void PEImage::DumpIAT(const std::string &target) const {
     const auto desc = load_data<IMAGE_IMPORT_DESCRIPTOR>(desc_raw);
     if (!desc.Characteristics) break;
 
-    const auto thunk_name = RvaString(desc.Name);
+    const auto thunk_name = RvaString(base_, desc.Name);
+
+    char boundStatus =
+      boundDir.size()
+      // If BID exists, each thunk should be bound
+      ? (desc.TimeDateStamp == -1 && LookupBoundDirEntry(boundDir, thunk_name))
+        ? '*' : '?'
+      // If BID does not exist, no thunk should be bound
+      : (boundStatus = desc.TimeDateStamp == -1) ? '?' : '\0';
 
     if (target.size() == 0 || target == "*") {
       std::stringstream s;
       s << std::dec << index_desc
         << ' ' << address_string(desc_raw)
-        << ' ' << thunk_name
-        << std::endl;
+        << ' ' << thunk_name;
+      if (boundStatus) s << ' ' << boundStatus;
+      s << std::endl;
       dprintf("%s", s.str().c_str());
     }
 
@@ -283,7 +354,7 @@ void PEImage::DumpExportTable() const {
     dir_end = dir_start + directories_[ExportTable].Size;
 
   const auto dir_table = load_data<IMAGE_EXPORT_DIRECTORY>(dir_start);
-  dprintf("%s\n", RvaString(dir_table.Name).c_str());
+  dprintf("%s\n", RvaString(base_, dir_table.Name).c_str());
 
   struct ExportTable {
     DWORD entry_;
@@ -300,7 +371,7 @@ void PEImage::DumpExportTable() const {
       base_ + dir_table.AddressOfNameOrdinals + i * 2);
     const auto rva_name =
       load_data<DWORD>(base_ + dir_table.AddressOfNames + i * 4);
-    table[index].name_ = RvaString(rva_name);
+    table[index].name_ = RvaString(base_, rva_name);
   }
 
   for (DWORD i = 0; i < dir_table.NumberOfFunctions; ++i) {
@@ -319,7 +390,7 @@ void PEImage::DumpExportTable() const {
 
     if (is_forwarder) {
       // Forwarder RVA
-      s << RvaString(table[i].entry_);
+      s << RvaString(base_, table[i].entry_);
     }
     else {
       // Export RVA

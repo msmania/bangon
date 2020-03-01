@@ -28,6 +28,7 @@ uint32_t get_field_info_with_module(const char *type, const char *field);
 address_t load_pointer(address_t addr);
 void DumpAddressAndSymbol(std::ostream &s, address_t addr);
 const char *ptos(uint64_t p, char *s, uint32_t len);
+std::string UnixTimeToSystemTime(uint32_t t);
 void Log(const wchar_t* format, ...);
 
 class debug_object {
