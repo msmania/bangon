@@ -14,5 +14,6 @@ EXPORTS
 	imp
 	sec
 	ts
+	v2p
 	ver
 	runtests

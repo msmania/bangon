@@ -14,5 +14,6 @@ Happy debugging! :sunglasses:
 !ext <Imagebase>                   - display export table
 !imp <Imagebase> [* | <Module>]    - display import table
 !sec <Imagebase>                   - display section table
+!v2p <VirtAddr> [<DirBase>] [PAE]  - paging translation
 !ver <Imagebase>                   - display version info
 ```
