@@ -178,7 +178,7 @@ class Paging {
     else {
       if (RWUSA) {
         attrs += (out.rw ? " W" : " R");
-        attrs += (out.us ? " S" : " U");
+        attrs += (out.us ? " U" : " S");
       }
       if (out.pwt) attrs += " PWT";
       if (out.pcd) attrs += " PCD";
