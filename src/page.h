@@ -145,7 +145,7 @@ union PTEntry {
 
     address_t to_page : 40;
 
-    address_t ignored2 : 17;
+    address_t ignored2 : 7;
     address_t protection_key : 4;
     address_t xd : 1;
   };

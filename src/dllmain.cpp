@@ -46,7 +46,7 @@ DECLARE_API(help) {
     "!ext <Imagebase>                   - display export table\n"
     "!imp <Imagebase> [* | <Module>]    - display import table\n"
     "!sec <Imagebase>                   - display section table\n"
-    "!v2p <VirtAddr> [<DirBase>] [PAE]  - paging translation\n"
+    "!v2p <VirtAddr> [<DirBase>] [32]   - paging translation\n"
     "!ver <Imagebase>                   - display version info\n"
     "\n");
 }
