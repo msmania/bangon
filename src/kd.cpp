@@ -284,27 +284,38 @@ class TranslationResultBase {
   std::vector<address_t> GetPageTableHierarchyForVirtual(
       CommandRunner& runner, address_t virt) const {
     std::vector<address_t> ret;
-    address_t pteBase = GetPteBase(runner);
+    address_t pteBase, addr;
     switch (mode_) {
       default: break;
+
       case PagingMode::L4:
+        ret = std::vector<address_t>(5);
+        pteBase = GetPteBase(runner);
         if (extract(pteBase, 0, 39) || extract(pteBase, 48, 16) != 0xffff) {
           runner.Printf("Invalid PTE Base - %s\n", address_string(pteBase));
           break;
         }
 
-        address_t prev = virt;
+        addr = virt;
         for (int i = 0; i < 5; ++i) {
           // Based on the formula in kdexts!DbgGetPteAddress
-          address_t addr = pteBase + extract(prev, 12, 36) * 8;
-          ret.push_back(addr);
-          prev = addr;
+          ret[i] = addr = pteBase + extract(addr, 12, 36) * 8;
         }
-        std::reverse(ret.begin(), ret.end());
-        return ret;
+        break;
+
+      case PagingMode::PAE:
+        ret = std::vector<address_t>(4);
+        pteBase = 0xc0000000;
+        addr = virt;
+        for (int i = 0; i < 4; ++i) {
+          // Based on the formula in nt!MiGetPteAddress
+          ret[i] = addr = pteBase + extract(addr, 12, 20) * 8;
+        }
+        break;
     }
 
-    return std::vector<address_t>(5);
+    std::reverse(ret.begin(), ret.end());
+    return ret;
   }
 
  public:
@@ -383,23 +394,26 @@ class TranslationResultPae : public TranslationResultBase {
   { dirBase_ = base; }
 
   void Print(CommandRunner& runner) const override {
+    auto virtPtes = GetPageTableHierarchyForVirtual(runner, virtAddr_);
     runner.Printf("PagingMode: PAE\n"
                   "DirBase:    %s\n"
-                  "PageDirPointerTable @%-4d= %s%s\n",
+                  "PageDirPointerTable @%-4d         = %s%s\n",
                   address_string(dirBase_),
                   static_cast<uint32_t>(extract(virtAddr_, 30, 2)),
                     address_string(pdpte_.raw),
                     GetCommonAttributesString(pdpte_).c_str());
     if (!pdpte_.p) return;
 
-    runner.Printf("PageDirTable        @%-4d= %s%s\n",
+    runner.Printf("PageDirTable        @%-4d%s = %s%s\n",
                   static_cast<uint32_t>(extract(virtAddr_, 21, 9)),
+                    address_string(virtPtes[2]),
                     address_string(pde_.raw),
                     GetCommonAttributesString(pde_).c_str());
     if (!pde_.p) return;
 
-    runner.Printf("PageTable           @%-4d= %s%s\n",
+    runner.Printf("PageTable           @%-4d%s = %s%s\n",
                   static_cast<uint32_t>(extract(virtAddr_, 12, 9)),
+                    address_string(virtPtes[3]),
                     address_string(pte_.raw),
                     GetCommonAttributesString(pte_).c_str());
   }
@@ -417,17 +431,21 @@ class TranslationResultPaeLarge : public TranslationResultBase {
   { dirBase_ = base; }
 
   void Print(CommandRunner& runner) const override {
+    auto virtPtes = GetPageTableHierarchyForVirtual(runner, virtAddr_);
     runner.Printf("PagingMode: PAE\n"
                   "DirBase:    %s\n"
-                  "PageDirPointerTable @%-4d= %s%s\n"
-                  "PageDirTable        @%-4d= %s (2MB Page)%s\n",
+                  "PageDirPointerTable @%-4d         = %s%s\n"
+                  "PageDirTable        @%-4d%s = %s (2MB Page)%s\n"
+                  "PageTable                %s   (2MB Page)\n",
                   address_string(dirBase_),
                   static_cast<uint32_t>(extract(virtAddr_, 30, 2)),
                     address_string(pdpte_.raw),
                     GetCommonAttributesString(pdpte_).c_str(),
                   static_cast<uint32_t>(extract(virtAddr_, 21, 9)),
+                    address_string(virtPtes[2]),
                     address_string(pde_.raw),
-                    GetCommonAttributesString(pde_).c_str());
+                    GetCommonAttributesString(pde_).c_str(),
+                  address_string(virtPtes[3]));
   }
 };
 
@@ -516,7 +534,8 @@ class TranslationResultPml4Large2M : public TranslationResultBase {
                   "DirBase:    %s %s\n"
                   "PML4 Table          @%-4d%s = %s%s\n"
                   "PageDirPointerTable @%-4d%s = %s%s\n"
-                  "PageDirTable        @%-4d%s = %s (2MB Page)%s\n",
+                  "PageDirTable        @%-4d%s = %s (2MB Page)%s\n"
+                  "PageTable                %s   (2MB Page)\n",
                   address_string(dirBase_),
                     address_string(virtPtes[0]),
                   static_cast<uint32_t>(extract(virtAddr_, 39, 9)),
@@ -530,7 +549,8 @@ class TranslationResultPml4Large2M : public TranslationResultBase {
                   static_cast<uint32_t>(extract(virtAddr_, 21, 9)),
                     address_string(virtPtes[3]),
                     address_string(pde_.raw),
-                    GetCommonAttributesString(pde_).c_str());
+                    GetCommonAttributesString(pde_).c_str(),
+                  address_string(virtPtes[4]));
   }
 };
 
@@ -550,7 +570,9 @@ class TranslationResultPml4Large1G : public TranslationResultBase {
     runner.Printf("PagingMode: 4-level\n"
                   "DirBase:    %s %s\n"
                   "PML4 Table          @%-4d%s = %s%s\n"
-                  "PageDirPointerTable @%-4d%s = %s (1GB Page)%s\n",
+                  "PageDirPointerTable @%-4d%s = %s (1GB Page)%s\n"
+                  "PageDirTable             %s   (1GB Page)\n"
+                  "PageTable                %s   (1GB Page)\n",
                   address_string(dirBase_),
                     address_string(virtPtes[0]),
                   static_cast<uint32_t>(extract(virtAddr_, 39, 9)),
@@ -560,7 +582,9 @@ class TranslationResultPml4Large1G : public TranslationResultBase {
                   static_cast<uint32_t>(extract(virtAddr_, 30, 9)),
                     address_string(virtPtes[2]),
                     address_string(pdpte_.raw),
-                    GetCommonAttributesString(pdpte_).c_str());
+                    GetCommonAttributesString(pdpte_).c_str(),
+                  address_string(virtPtes[3]),
+                  address_string(virtPtes[4]));
   }
 };
 
