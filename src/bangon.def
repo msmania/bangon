@@ -12,6 +12,7 @@ EXPORTS
 	ex
 	ext
 	imp
+	pfn2
 	sec
 	ts
 	v2p

@@ -815,6 +815,102 @@ class Paging {
   }
 };
 
+class PfnDatabase {
+  CommandRunner& runner_;
+  address_t pfnBase_;
+  uint32_t entrySize_;
+  uint32_t toPteAddr_, toPte_, toVar_;
+  FIELD_INFO fieldPteFrame_,
+             fieldPartition_,
+             fieldSpare_,
+             fieldPageIdentity_;
+  uint32_t bitResident_,
+           bitFileOnly_,
+           bitPfnExists_,
+           bitProto_;
+
+ public:
+  PfnDatabase(CommandRunner& runner)
+    : runner_(runner), pfnBase_(0),
+      entrySize_(runner.GetTypeSize("nt!_MMPFN")),
+      toPteAddr_(get_field_offset("nt!_MMPFN", "PteAddress")),
+      toPte_(get_field_offset("nt!_MMPFN", "OriginalPte")),
+      toVar_(get_field_offset("nt!_MMPFN", "u4")),
+      fieldPteFrame_(get_field_info("nt!_MMPFN", "u4.PteFrame")),
+      fieldPartition_(get_field_info("nt!_MMPFN", "u4.Partition")),
+      fieldSpare_(get_field_info("nt!_MMPFN", "u4.Spare")),
+      fieldPageIdentity_(get_field_info("nt!_MMPFN", "u4.PageIdentity")),
+      bitResident_(get_field_info("nt!_MMPFN", "u4.ResidentPage")
+          .BitField.Position),
+      bitFileOnly_(get_field_info("nt!_MMPFN", "u4.FileOnly")
+          .BitField.Position),
+      bitPfnExists_(get_field_info("nt!_MMPFN", "u4.PfnExists")
+          .BitField.Position),
+      bitProto_(get_field_info("nt!_MMPFN", "u4.PrototypePte")
+          .BitField.Position) {
+    address_t p;
+    if (!runner.Evaluate("nt!MmPfnDatabase", p)
+        || !runner.ReadVirtual(p, pfnBase_)) {
+      Log(L"Failed to locate nt!MmPfnDatabase\n");
+      return;
+    }
+  }
+
+  operator bool() const { return pfnBase_ && entrySize_; }
+
+  void DumpRecord(int64_t pfn, Paging* paging = nullptr) {
+    auto record = std::make_unique<uint8_t[]>(entrySize_);
+    address_t virtAddr = pfnBase_ + pfn * entrySize_;
+
+    if (paging) {
+      address_t phys;
+      if (!paging->Translate(virtAddr, phys)
+          || !runner_.ReadPhysical(phys, record.get(), entrySize_)) {
+        runner_.Printf("Fail to load a PFN record.\n");
+        return;
+      }
+    }
+    else {
+      if (!runner_.ReadVirtual(virtAddr, record.get(), entrySize_)) {
+        runner_.Printf("Fail to load a PFN record.\n");
+        return;
+      }
+    }
+
+    address_t pteAddr = *at<address_t>(record.get(), toPteAddr_);
+    uint64_t pteData = *at<address_t>(record.get(), toPte_),
+             varData = *at<address_t>(record.get(), toVar_);
+
+    const uint64_t frame =
+        (varData >> fieldPteFrame_.BitField.Position)
+        & ((1ull << fieldPteFrame_.BitField.Size) - 1);
+    const uint32_t partition =
+        (varData >> fieldPartition_.BitField.Position)
+        & ((1ull << fieldPartition_.BitField.Size) - 1);
+    const uint32_t spare =
+        (varData >> fieldSpare_.BitField.Position)
+        & ((1ull << fieldSpare_.BitField.Size) - 1);
+    const uint32_t identity =
+        (varData >> fieldPageIdentity_.BitField.Position)
+        & ((1ull << fieldPageIdentity_.BitField.Size) - 1);
+
+    std::string opt;
+    if (varData & (1ull << bitResident_)) opt += " Resid";
+    if (varData & (1ull << bitFileOnly_)) opt += " File";
+    if (varData & (1ull << bitPfnExists_)) opt += " Exist";
+    if (varData & (1ull << bitProto_)) opt += " Proto";
+
+    runner_.Printf("PFN@%x %s: %s {%s} #%x %d %d %d%s\n",
+                   pfn,
+                   address_string(virtAddr),
+                   address_string(pteAddr),
+                   address_string(pteData),
+                   frame,
+                   partition, spare, identity,
+                   opt.c_str());
+  }
+};
+
 DECLARE_API(v2p) {
   const auto vargs = get_args(args);
   if (vargs.size() == 0) return;
@@ -842,7 +938,49 @@ DECLARE_API(v2p) {
   address_t phys;
   bool translated = paging->Translate(virt, phys);
   paging->PrintResult();
-  if (translated) {
-    runner.Printf("Physical Address = %s\n", address_string(phys));
+  if (!translated) return;
+
+  runner.Printf("Physical Address = %s\n", address_string(phys));
+  if (runner->IsPointer64Bit() != S_OK) return;
+
+  PfnDatabase db(runner);
+  if (!db) return;
+
+  db.DumpRecord(phys >> 12,
+                vargs.size() == 1 ? nullptr : paging.get());
+}
+
+DECLARE_API(pfn2) {
+  const auto vargs = get_args(args);
+  if (vargs.size() == 0) return;
+
+  CommandRunner runner;
+  if (!runner) return;
+  if (runner->IsPointer64Bit() != S_OK) {
+    runner.Printf("32-bit is not supported.\n");
+    return;
+  }
+
+  address_t pfn;
+  if (!runner.Evaluate(vargs[0].c_str(), pfn)) return;
+
+  PfnDatabase db(runner);
+  if (!db) return;
+
+  if (vargs.size() == 1) {
+    db.DumpRecord(pfn);
+  }
+  else {
+    std::unique_ptr<Paging> paging;
+    if (vargs.size() == 1) {
+      paging = std::make_unique<Paging>(runner);
+    }
+    else {
+      address_t dirbase;
+      if (!runner.Evaluate(vargs[1].c_str(), dirbase)) return;
+      paging = std::make_unique<Paging>(runner, dirbase, /*maybe32bit*/false);
+    }
+
+    db.DumpRecord(pfn, paging.get());
   }
 }
