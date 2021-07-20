@@ -84,6 +84,7 @@ bool PEImage::Load(address_t base) {
     default:
       dprintf("Unsupported platform - %04x.\n", fileHeader.Machine);
       return false;
+    case IMAGE_FILE_MACHINE_ARM64:
     case IMAGE_FILE_MACHINE_AMD64: {
       const auto optHeader = load_data<IMAGE_OPTIONAL_HEADER64>(rvaOptHeader);
       sectionHeader += sizeof(IMAGE_OPTIONAL_HEADER64);
