@@ -20,6 +20,7 @@ OBJS=\
 	$(OBJDIR)\dllmain.obj\
 	$(OBJDIR)\dt.obj\
 	$(OBJDIR)\kd.obj\
+	$(OBJDIR)\memreport.obj\
 	$(OBJDIR)\peimage.obj\
 	$(OBJDIR)\symbol_manager.obj\
 	$(OBJDIR)\thread.obj\
