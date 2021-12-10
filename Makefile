@@ -21,6 +21,7 @@ OBJS=\
 	$(OBJDIR)\dt.obj\
 	$(OBJDIR)\kd.obj\
 	$(OBJDIR)\peimage.obj\
+	$(OBJDIR)\process.obj\
 	$(OBJDIR)\symbol_manager.obj\
 	$(OBJDIR)\thread.obj\
 	$(OBJDIR)\utils.obj\
