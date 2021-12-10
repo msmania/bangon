@@ -125,15 +125,11 @@ bool PEImage::Load(address_t base) {
   return true;
 }
 
-void PEImage::DumpIATEntries(int index,
-                             std::ostream &s,
-                             const IMAGE_IMPORT_DESCRIPTOR &desc) const {
+void PEImage::DumpIATEntries(int index, std::ostream &s,
+                             address_t start_name, address_t start_func) const {
   if (!IsInitialized()) return;
 
   const uint32_t address_size = Is64bit() ? 8 : 4;
-  const address_t
-    start_name = base_ + desc.OriginalFirstThunk,
-    start_func = base_ + desc.FirstThunk;
 
   for (int index_entry = 0; ; ++index_entry) {
     const address_t
@@ -218,6 +214,41 @@ PEImage::BoundDirT PEImage::LoadBoundImportDirectory() const {
   return dic;
 }
 
+void PEImage::DumpDelayloadTable(bool dumpFuncs) const {
+  if (!IsInitialized()) return;
+
+  const uint32_t address_size = Is64bit() ? 8 : 4;
+
+  const address_t
+    dir_start = base_ + directories_[DelayImportDescriptor].VirtualAddress,
+    dir_end = dir_start + directories_[DelayImportDescriptor].Size;
+
+  int index_desc = 0;
+  for (address_t desc_raw = dir_start;
+       desc_raw < dir_end;
+       desc_raw += sizeof(IMAGE_DELAYLOAD_DESCRIPTOR), ++index_desc) {
+    const auto desc = load_data<IMAGE_DELAYLOAD_DESCRIPTOR>(desc_raw);
+    if (!desc.DllNameRVA) {
+      break;
+    }
+
+    auto name_module = RvaString(base_, desc.DllNameRVA);
+    std::stringstream s;
+    s << std::dec << index_desc
+      << ' ' << address_string(desc_raw)
+      << ' ' << name_module
+      << std::endl;
+
+    if (dumpFuncs) {
+      DumpIATEntries(index_desc, s,
+                     base_ + desc.ImportNameTableRVA,
+                     base_ + desc.ImportAddressTableRVA);
+    }
+
+    dprintf("%s", s.str().c_str());
+  }
+}
+
 void PEImage::DumpIAT(const std::string &target) const {
   if (!IsInitialized()) return;
 
@@ -256,7 +287,9 @@ void PEImage::DumpIAT(const std::string &target) const {
 
     if (target == "*" || target == thunk_name) {
       std::stringstream s;
-      DumpIATEntries(index_desc, s, desc);
+      DumpIATEntries(index_desc, s,
+                     base_ + desc.OriginalFirstThunk,
+                     base_ + desc.FirstThunk);
       dprintf("%s\n", s.str().c_str());
     }
   }
@@ -794,6 +827,15 @@ DECLARE_API(imp) {
   if (vargs.size() > 0) {
     if (PEImage pe = GetExpression(vargs[0].c_str())) {
       pe.DumpIAT(vargs.size() >= 2 ? vargs[1] : std::string());
+    }
+  }
+}
+
+DECLARE_API(delay) {
+  const auto vargs = get_args(args);
+  if (vargs.size() > 0) {
+    if (PEImage pe = GetExpression(vargs[0].c_str())) {
+      pe.DumpDelayloadTable(vargs.size() >= 2 && vargs[1] == "1");
     }
   }
 }

@@ -8,6 +8,7 @@ EXPORTS
 	ExtensionApiVersion
 	help
 	cfg
+	delay
 	dt
 	ex
 	ext

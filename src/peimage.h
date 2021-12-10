@@ -11,9 +11,8 @@ private:
   std::vector<IMAGE_SECTION_HEADER> sections_;
 
   bool Load(ULONG64 ImageBase);
-  void DumpIATEntries(int index,
-                      std::ostream &s,
-                      const IMAGE_IMPORT_DESCRIPTOR &desc) const;
+  void DumpIATEntries(int index, std::ostream &s,
+                      address_t start_name, address_t start_func) const;
   int LookupSection(uint32_t rva, uint32_t size) const;
   BoundDirT LoadBoundImportDirectory() const;
 
@@ -26,6 +25,7 @@ public:
   bool Is64bit() const;
 
   void DumpIAT(const std::string &target) const;
+  void DumpDelayloadTable(bool dumpFuncs) const;
   void DumpLoadConfig() const;
   void DumpExportTable() const;
   void DumpExceptionRecords(address_t exception_pc) const;
